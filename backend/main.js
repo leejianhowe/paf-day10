@@ -91,7 +91,8 @@ app.post('/post',upload.single('image'),async (req,res)=>{
 				.then(()=>insertMongo(body,file,client,MONGO_DB,MONGO_COL))
 				.then(result=>{
 					console.log('inserted id',result.insertedId)
-					deleteTempFiles(fs,path)
+					// deleteTempFiles(fs,path)
+					fs.unlink(req.file.path,()=>{})
 					res.status(200).type('application/json').json({id:result.insertedId})
 				})
 				.catch(err=>{
@@ -106,6 +107,8 @@ app.post('/post',upload.single('image'),async (req,res)=>{
 })
 
 app.use(express.static('static'))
+
+
 
 Promise.all([checkSql(pool),client.connect(),checkS3(s3)])
 	.then(()=>{
