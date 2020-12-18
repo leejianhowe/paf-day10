@@ -6,8 +6,9 @@ const multer = require('multer')
 const AWS = require('aws-sdk')
 const sha1 = require('sha1')
 const fs = require('fs')
+const path = require('path')
 
-const {makeQuery,checkSql} = require('./modules')
+const {makeQuery,checkSql,checkS3, readFile,putObject,insertMongo,deleteTempFiles} = require('./modules')
 
 
 const PORT = parseInt(process.argv[2]) || parseInt(process.env.PORT) || 3000
@@ -36,6 +37,7 @@ const s3 = new AWS.S3({
     endpoint: endpoint,
 })
 
+
 // mongodb
 const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017'
 const MONGO_DB = process.env.MONGO_DB || 'shared'
@@ -49,26 +51,12 @@ app.use(morgan('combined'))
 // POST /login
 app.post('/login',express.json(), async (req,res)=>{
 	const userDetails = req.body
-	// const conn = await pool.getConnection()
 	const passwordSubmit = sha1(userDetails.password)
 	console.log('passwordSubmit',passwordSubmit)
 	try{
-		// const result = await conn.query('SELECT * from user where user_id = ?',[userDetails.username])
 		const result = await authUser(userDetails.username,passwordSubmit)
-		// console.log('length',result[0].length)
 		console.log(result)
-		// if (result[0].length===0){
-		// 	res.status(401).type('application/json').json({err:'user not incorrect'})
-		// }else{
-		// 	const passwordDB = result[0][0].password
-		// 	console.log('passwordDB',passwordDB)
-		// 	if(passwordDB==passwordSubmit){
-		// 		res.status(200).type('application/json').json({user_id:userDetails.username,password:userDetails.password})
-		// 	}
-		// 	else{
-		// 		res.status(401).type('application/json').json({err:'password incorrect'})
-		// 	}
-		// }
+	
 		if (result){
 			res.status(200).type('application/json').json({user_id:userDetails.username,password:userDetails.password})
 		}else{
@@ -79,6 +67,9 @@ app.post('/login',express.json(), async (req,res)=>{
 	}
 	
 })
+
+
+
 
 // POST /post
 app.post('/post',upload.single('image'),async (req,res)=>{
@@ -95,48 +86,19 @@ app.post('/post',upload.single('image'),async (req,res)=>{
 		if(!result){
 			res.status(401).json({error:"invalid username/password"})
 		}else{
-			fs.readFile(req.file.path,(err,data)=>{
-				if(err)
-					return err
-				const params = {
-					Bucket: AWS_BUCKET,
-					Key: req.file.filename,
-					ACL:'public-read',
-					Body: data,
-					ContentType: req.file.mimetype,
-					ContentLength: req.file.size,
-				}
-				s3.putObject(params,(err,data)=>{
-					if(err)
-						return res.status(500).json({error:err.message})
-					console.log('sucessfully updated',data)
-					const createdTime = new Date()
-					client.db(MONGO_DB).collection(MONGO_COL).insertOne({
-						title: req.body.title,
-						comments: req.body.comments,
-						createdTime: createdTime,
-						imageRef: req.file.filename
-						})
-						.then(result=>{
-							console.log('inserted id',result.insertedId)
-							fs.unlink(req.file.path,(err)=>{
-								if(err)
-									console.log(err)
-							})
-							res.status(200).type('application/json').json({id:result.insertedId})
-							
-						})
-						.catch(err=>{
-							console.log(err)
-							res.status(500).type('application/json').json({error:err.message})
-						})
-					
+			readFile(fs,req.file.path)
+				.then(data=>putObject(s3,file,data,AWS_BUCKET))
+				.then(()=>insertMongo(body,file,client,MONGO_DB,MONGO_COL))
+				.then(result=>{
+					console.log('inserted id',result.insertedId)
+					deleteTempFiles(fs,path)
+					res.status(200).type('application/json').json({id:result.insertedId})
 				})
-
-			})
-
+				.catch(err=>{
+					console.log(err)
+					res.status(500).type('application/json').json({error:err.message})
+				})
 		}
-
 	}catch(err){
 		console.log(err)
 		res.status(500).json({error:err.message})
@@ -145,7 +107,7 @@ app.post('/post',upload.single('image'),async (req,res)=>{
 
 app.use(express.static('static'))
 
-Promise.all([checkSql(pool),client.connect()])
+Promise.all([checkSql(pool),client.connect(),checkS3(s3)])
 	.then(()=>{
 		app.listen(PORT, () => {
 			console.info(`Application started on port ${PORT} at ${new Date()}`)
@@ -155,3 +117,42 @@ Promise.all([checkSql(pool),client.connect()])
 		console.log(err)
 	)
 
+			// fs.readFile(req.file.path,(err,data)=>{
+			// 	if(err)
+			// 		return err
+			// 	const params = {
+			// 		Bucket: AWS_BUCKET,
+			// 		Key: req.file.filename,
+			// 		ACL:'public-read',
+			// 		Body: data,
+			// 		ContentType: req.file.mimetype,
+			// 		ContentLength: req.file.size,
+			// 	}
+			// 	s3.putObject(params,(err,data)=>{
+			// 		if(err)
+			// 			return res.status(500).json({error:err.message})
+			// 		console.log('sucessfully updated',data)
+			// 		const createdTime = new Date()
+			// 		client.db(MONGO_DB).collection(MONGO_COL).insertOne({
+			// 			title: req.body.title,
+			// 			comments: req.body.comments,
+			// 			createdTime: createdTime,
+			// 			imageRef: req.file.filename
+			// 			})
+			// 			.then(result=>{
+			// 				console.log('inserted id',result.insertedId)
+			// 				fs.unlink(req.file.path,(err)=>{
+			// 					if(err)
+			// 						console.log(err)
+			// 				})
+			// 				res.status(200).type('application/json').json({id:result.insertedId})
+							
+			// 			})
+			// 			.catch(err=>{
+			// 				console.log(err)
+			// 				res.status(500).type('application/json').json({error:err.message})
+			// 			})
+					
+			// 	})
+
+			// })

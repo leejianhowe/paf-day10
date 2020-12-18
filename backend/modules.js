@@ -45,4 +45,71 @@ const checkSql = async(pool)=>{
 	}
 }
 
-module.exports={makeQuery, checkSql}
+const checkS3 = (s3)=>{
+	new Promise((res,rej)=>{
+    // checks for credentials from .aws file
+    s3.config.getCredentials((err,data)=>{
+		if(err)
+			rej(err)
+		res(true)
+	})
+})
+}
+
+const readFile = (fs,path)=>{
+	return new Promise((res,rej)=>{
+		fs.readFile(path,(err,data)=>{
+			if(err)
+				rej(err)
+			res(data)
+		})
+	})
+}
+
+const putObject = (s3, file, data, bucket)=>{
+	const params = {
+		Bucket: bucket,
+		Key: file.filename,
+		ACL:'public-read',
+		Body: data,
+		ContentType: file.mimetype,
+		ContentLength: file.size,
+	}
+	return new Promise((res,rej)=>{
+		s3.putObject(params,(err,data)=>{
+			if(err)
+                rej(err)
+            console.log('sucessfully updated',data)
+			res(data)
+		})
+	})
+
+}
+const insertMongo = (body,file,client,MONGO_DB,MONGO_COL)=>{
+	const createdTime = new Date()
+	return client.db(MONGO_DB).collection(MONGO_COL).insertOne({
+		title: body.title,
+		comments: body.comments,
+		createdTime: createdTime,
+		imageRef: file.filename
+		})
+}
+
+
+const deleteTempFiles = (fs,path)=>{
+    fs.readdir(path.join(__dirname, 'uploads'),(err,files)=>{
+        if(err)
+            throw err
+        if(files.length){
+            console.log(`No of files in upload: ${files.length}`)
+            console.log(files)
+            files.forEach((ele)=>{
+                fs.unlink(path.join(__dirname,'uploads',ele),()=>{
+                })
+            })
+            console.log(`deleted ${files.length} files in uploads`) 
+        }
+    })
+}
+
+module.exports={makeQuery, checkSql, checkS3, readFile, putObject,insertMongo,deleteTempFiles}
